@@ -55,14 +55,25 @@ class RocketAccessibilityService : AccessibilityService() {
         )
     }
 
+    // ФУНКЦИЯ СЖАТИЯ СКРИНШОТА
     fun captureToBase64(callback: (String?) -> Unit) {
         captureBitmap { bitmap ->
             if (bitmap == null) { callback(null); return@captureBitmap }
             try {
+                // Сжимаем картинку до 1024px по длинной стороне
+                val maxSize = 1024f
+                val ratio = bitmap.width.coerceAtLeast(bitmap.height) / maxSize
+                val newWidth = (bitmap.width / ratio).toInt()
+                val newHeight = (bitmap.height / ratio).toInt()
+                val scaledBitmap = Bitmap.createScaledBitmap(bitmap, newWidth, newHeight, true)
+
                 val out = ByteArrayOutputStream()
-                bitmap.compress(Bitmap.CompressFormat.JPEG, 60, out)
+                // Жмем в JPEG 50% (для скриншота этого достаточно)
+                scaledBitmap.compress(Bitmap.CompressFormat.JPEG, 50, out)
                 val b64 = Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
                 callback(b64)
+                
+                if (scaledBitmap != bitmap) scaledBitmap.recycle()
             } catch (t: Throwable) {
                 callback(null)
             } finally {
