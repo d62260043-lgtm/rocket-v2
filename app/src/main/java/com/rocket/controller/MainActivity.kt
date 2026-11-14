@@ -4,7 +4,6 @@ import android.accessibilityservice.AccessibilityService
 import android.content.Intent
 import android.hardware.camera2.CameraManager
 import android.media.AudioManager
-import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.AlarmClock
@@ -48,7 +47,7 @@ class MainActivity : ComponentActivity() {
     private val API_URL = "https://api.altrouter.ai/v1/chat/completions"
     private val MODEL = "gemini-3.1-pro"
     
-    // Таймауты увеличены для Gemini
+    // Увеличенные таймауты
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(120, TimeUnit.SECONDS)
@@ -80,7 +79,7 @@ class MainActivity : ComponentActivity() {
         val listState = rememberLazyListState()
 
         LaunchedEffect(Unit) {
-            messages.add(ChatMessage("Привет, Дим! Я ROCKET. Теперь я умею не только кликать, но и управлять системой. Что делаем?", false))
+            messages.add(ChatMessage("Привет, Дим! Я ROCKET. Сжатие включено, ретраи готовы. Что делаем?", false))
         }
 
         LaunchedEffect(messages.size) {
@@ -88,43 +87,31 @@ class MainActivity : ComponentActivity() {
         }
 
         Column(modifier = Modifier.fillMaxSize().background(Color(0xFF0F0F0F)).padding(16.dp)) {
-
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 16.dp)) {
                 Text("🤖", fontSize = 28.sp)
                 Spacer(Modifier.width(12.dp))
                 Column {
                     Text("ROCKET AI", color = Color(0xFF4A7CFF), fontWeight = FontWeight.Bold, fontSize = 20.sp)
-                    Text("Онлайн", color = Color.Gray, fontSize = 12.sp)
+                    Text("Сжатие: 50%", color = Color.Gray, fontSize = 12.sp)
                 }
                 Spacer(Modifier.weight(1f))
-                IconButton(onClick = {
-                    startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-                }) {
+                IconButton(onClick = { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }) {
                     Icon(Icons.Default.Settings, contentDescription = "Настройки", tint = Color.Gray)
                 }
             }
 
-            LazyColumn(
-                state = listState,
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
+            LazyColumn(state = listState, modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 items(messages) { msg -> ChatBubble(msg) }
                 if (isLoading) {
-                    item {
-                        Text("ROCKET печатает...", color = Color.Gray, fontSize = 12.sp, modifier = Modifier.padding(start = 8.dp))
-                    }
+                    item { Text("ROCKET печатает...", color = Color.Gray, fontSize = 12.sp, modifier = Modifier.padding(start = 8.dp)) }
                 }
             }
 
             Row(
-                modifier = Modifier.fillMaxWidth().padding(top = 16.dp)
-                    .background(Color(0xFF1E1E1E), RoundedCornerShape(24.dp)).padding(8.dp),
+                modifier = Modifier.fillMaxWidth().padding(top = 16.dp).background(Color(0xFF1E1E1E), RoundedCornerShape(24.dp)).padding(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(onClick = {
-                    android.widget.Toast.makeText(context, "Меню в разработке", android.widget.Toast.LENGTH_SHORT).show()
-                }) {
+                IconButton(onClick = { android.widget.Toast.makeText(context, "Меню в разработке", android.widget.Toast.LENGTH_SHORT).show() }) {
                     Icon(Icons.Default.Add, contentDescription = "Add", tint = Color.Gray)
                 }
                 TextField(
@@ -157,20 +144,12 @@ class MainActivity : ComponentActivity() {
 
     @Composable
     fun ChatBubble(msg: ChatMessage) {
-        Box(
-            modifier = Modifier.fillMaxWidth(),
-            contentAlignment = if (msg.isUser) Alignment.CenterEnd else Alignment.CenterStart
-        ) {
+        Box(modifier = Modifier.fillMaxWidth(), contentAlignment = if (msg.isUser) Alignment.CenterEnd else Alignment.CenterStart) {
             Surface(
                 color = if (msg.isUser) Color(0xFF0056B3) else Color(0xFF2A2A2A),
                 shape = RoundedCornerShape(16.dp, 16.dp, if (msg.isUser) 0.dp else 16.dp, if (msg.isUser) 16.dp else 0.dp)
             ) {
-                Text(
-                    text = msg.text,
-                    color = Color.White,
-                    modifier = Modifier.padding(12.dp),
-                    fontSize = 15.sp
-                )
+                Text(text = msg.text, color = Color.White, modifier = Modifier.padding(12.dp), fontSize = 15.sp)
             }
         }
     }
@@ -183,17 +162,75 @@ class MainActivity : ComponentActivity() {
         }
         messages.add(ChatMessage(cmd, true))
         setLoading(true)
-        service.captureToBase64 { base64 ->
-            if (base64 == null) {
-                messages.add(ChatMessage("❌ Не удалось сделать скриншот.", false))
-                setLoading(false)
-                return@captureToBase64
+
+        val lowerCmd = cmd.lowercase()
+        val isLocalAction = lowerCmd.contains("открой") || lowerCmd.contains("запусти") || 
+                            lowerCmd.contains("будильник") || lowerCmd.contains("фонарик") ||
+                            lowerCmd.contains("громкость") || lowerCmd.contains("настройки")
+
+        if (isLocalAction) {
+            askAILocal(cmd, messages, setLoading)
+        } else {
+            service.captureToBase64 { base64 ->
+                if (base64 == null) {
+                    messages.add(ChatMessage("❌ Не удалось сделать скриншот.", false))
+                    setLoading(false)
+                    return@captureToBase64
+                }
+                askAI(cmd, base64, messages, setLoading, retryCount = 0)
             }
-            askAI(cmd, base64, messages, setLoading)
         }
     }
 
-    private fun askAI(prompt: String, base64Image: String, messages: MutableList<ChatMessage>, setLoading: (Boolean) -> Unit) {
+    private fun askAILocal(prompt: String, messages: MutableList<ChatMessage>, setLoading: (Boolean) -> Unit) {
+        val systemPrompt = """
+            Ты — ROCKET. Отвечай ТОЛЬКО валидным JSON без markdown.
+            1. Открыть приложение: {"action": "open_app", "package": "com.google.android.youtube"}
+            2. Будильник: {"action": "alarm", "hour": 7, "minute": 0}
+            3. Фонарик: {"action": "flashlight", "state": "on"}
+            4. Громкость: {"action": "volume", "level": 10}
+            5. Настройки: {"action": "settings", "panel": "wifi"}
+            
+            Пакеты: YouTube - com.google.android.youtube, Telegram - org.telegram.messenger, VK - com.vkontakte.android, Chrome - com.android.chrome.
+        """.trimIndent()
+
+        val json = JSONObject().apply {
+            put("model", MODEL)
+            put("messages", JSONArray().apply {
+                put(JSONObject().apply { put("role", "system"); put("content", systemPrompt) })
+                put(JSONObject().apply { put("role", "user"); put("content", prompt) })
+            })
+        }
+
+        val body = json.toString().toRequestBody("application/json".toMediaType())
+        val request = Request.Builder().url(API_URL).addHeader("Authorization", "Bearer $API_KEY").post(body).build()
+
+        kotlinx.coroutines.MainScope().launch(Dispatchers.IO) {
+            try {
+                val response = client.newCall(request).execute()
+                val resBody = response.body?.string() ?: ""
+                withContext(Dispatchers.Main) {
+                    try {
+                        val jsonResp = JSONObject(resBody)
+                        var content = jsonResp.getJSONArray("choices").getJSONObject(0).getJSONObject("message").getString("content")
+                        content = content.replace("```json", "").replace("```", "").trim()
+                        messages.add(ChatMessage(content, false))
+                        executeAction(content, 100, 100, messages)
+                    } catch (e: Exception) {
+                        messages.add(ChatMessage("❌ Ошибка парсинга: $e", false))
+                    }
+                    setLoading(false)
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    messages.add(ChatMessage("❌ Ошибка сети: ${e.message}", false))
+                    setLoading(false)
+                }
+            }
+        }
+    }
+
+    private fun askAI(prompt: String, base64Image: String, messages: MutableList<ChatMessage>, setLoading: (Boolean) -> Unit, retryCount: Int) {
         val bytes = android.util.Base64.decode(base64Image, android.util.Base64.DEFAULT)
         val options = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
         android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
@@ -201,25 +238,14 @@ class MainActivity : ComponentActivity() {
         val realHeight = options.outHeight
 
         val systemPrompt = """
-            Ты — ROCKET, ИИ-агент. Отвечай ТОЛЬКО валидным JSON без markdown.
-            
-            Если задача требует прямого системного действия (открыть приложение, будильник, фонарик), используй эти команды:
-            1. Открыть приложение: {"action": "open_app", "package": "com.android.youtube"}
-            2. Будильник: {"action": "alarm", "hour": 7, "minute": 0}
-            3. Фонарик: {"action": "flashlight", "state": "on"} (или "off")
-            4. Громкость: {"action": "volume", "level": 10} (от 0 до 15)
-            5. Открыть настройки: {"action": "settings", "panel": "wifi"} (или "bluetooth")
-            
-            Если задача требует взаимодействия с экраном (клик, свайп), используй:
-            6. Клик: {"action": "click", "x": 500, "y": 800}
-            7. Свайп: {"action": "swipe", "x1": 500, "y1": 1500, "x2": 500, "y2": 500}
-            8. Ввод: {"action": "type", "text": "привет"}
-            9. Назад: {"action": "back"}
-            10. Домой: {"action": "home"}
-            11. Завершить: {"action": "done"}
-            
-            Размер экрана: ${realWidth}x${realHeight}.
-            Внимательно смотри на скриншот. Если нужной кнопки нет — свайпай.
+            Ты — ROCKET. Отвечай ТОЛЬКО JSON.
+            1. Клик: {"action": "click", "x": 500, "y": 800}
+            2. Свайп: {"action": "swipe", "x1": 500, "y1": 1500, "x2": 500, "y2": 500}
+            3. Ввод: {"action": "type", "text": "привет"}
+            4. Назад: {"action": "back"}
+            5. Домой: {"action": "home"}
+            6. Завершить: {"action": "done"}
+            Размер экрана: ${realWidth}x${realHeight}. Если кнопки нет — свайпай.
         """.trimIndent()
 
         val json = JSONObject().apply {
@@ -247,21 +273,24 @@ class MainActivity : ComponentActivity() {
                     try {
                         val jsonResp = JSONObject(resBody)
                         var content = jsonResp.getJSONArray("choices").getJSONObject(0).getJSONObject("message").getString("content")
-                        
-                        // Очистка от markdown
                         content = content.replace("```json", "").replace("```", "").trim()
-                        
                         messages.add(ChatMessage(content, false))
                         executeAction(content, realWidth, realHeight, messages)
+                        setLoading(false)
                     } catch (e: Exception) {
                         messages.add(ChatMessage("❌ Ошибка парсинга: $e", false))
+                        setLoading(false)
                     }
-                    setLoading(false)
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    messages.add(ChatMessage("❌ Ошибка сети: ${e.message}", false))
-                    setLoading(false)
+                    if (retryCount < 1) {
+                        messages.add(ChatMessage("⚠️ Сбой сети, пробую еще раз...", false))
+                        askAI(prompt, base64Image, messages, setLoading, retryCount + 1)
+                    } else {
+                        messages.add(ChatMessage("❌ Ошибка сети: ${e.message}", false))
+                        setLoading(false)
+                    }
                 }
             }
         }
@@ -275,72 +304,51 @@ class MainActivity : ComponentActivity() {
             val service = RocketAccessibilityService.instance ?: return
             val action = actionJson.getString("action")
 
-            // --- НОВЫЕ СИСТЕМНЫЕ ДЕЙСТВИЯ ---
             if (action == "open_app") {
                 val pkg = actionJson.getString("package")
                 val intent = packageManager.getLaunchIntentForPackage(pkg)
-                if (intent != null) {
-                    startActivity(intent)
-                    messages.add(ChatMessage("✅ Открываю $pkg", false))
-                } else {
-                    messages.add(ChatMessage("❌ Приложение $pkg не найдено", false))
-                }
+                if (intent != null) { startActivity(intent); messages.add(ChatMessage("✅ Открываю $pkg", false)) }
+                else messages.add(ChatMessage("❌ Приложение $pkg не найдено", false))
                 return
             }
-            
             if (action == "alarm") {
-                val hour = actionJson.getInt("hour")
-                val minute = actionJson.getInt("minute")
-                val intent = Intent(AlarmClock.ACTION_SET_ALARM).apply {
-                    putExtra(AlarmClock.EXTRA_HOUR, hour)
-                    putExtra(AlarmClock.EXTRA_MINUTES, minute)
-                    putExtra(AlarmClock.EXTRA_SKIP_UI, true)
-                }
-                startActivity(intent)
-                messages.add(ChatMessage("✅ Будильник на $hour:$minute", false))
+                val h = actionJson.getInt("hour"); val m = actionJson.getInt("minute")
+                startActivity(Intent(AlarmClock.ACTION_SET_ALARM).apply {
+                    putExtra(AlarmClock.EXTRA_HOUR, h); putExtra(AlarmClock.EXTRA_MINUTES, m); putExtra(AlarmClock.EXTRA_SKIP_UI, true)
+                })
+                messages.add(ChatMessage("✅ Будильник на $h:$m", false))
                 return
             }
-
             if (action == "flashlight") {
                 val state = actionJson.getString("state") == "on"
-                val cameraManager = getSystemService(CAMERA_SERVICE) as CameraManager
-                val cameraId = cameraManager.cameraIdList[0]
-                cameraManager.setTorchMode(cameraId, state)
+                val cm = getSystemService(CAMERA_SERVICE) as CameraManager
+                cm.setTorchMode(cm.cameraIdList[0], state)
                 messages.add(ChatMessage("✅ Фонарик: ${if (state) "ВКЛ" else "ВЫКЛ"}", false))
                 return
             }
-
             if (action == "volume") {
                 val level = actionJson.getInt("level")
-                val audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
-                audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, level, 0)
+                val am = getSystemService(AUDIO_SERVICE) as AudioManager
+                am.setStreamVolume(AudioManager.STREAM_MUSIC, level, 0)
                 messages.add(ChatMessage("✅ Громкость: $level", false))
                 return
             }
-
             if (action == "settings") {
                 val panel = actionJson.getString("panel")
-                val intent = when (panel) {
-                    "wifi" -> Intent(Settings.ACTION_WIFI_SETTINGS)
-                    "bluetooth" -> Intent(Settings.ACTION_BLUETOOTH_SETTINGS)
-                    else -> Intent(Settings.ACTION_SETTINGS)
-                }
+                val intent = when (panel) { "wifi" -> Intent(Settings.ACTION_WIFI_SETTINGS); "bluetooth" -> Intent(Settings.ACTION_BLUETOOTH_SETTINGS); else -> Intent(Settings.ACTION_SETTINGS) }
                 startActivity(intent)
-                messages.add(ChatMessage("✅ Открываю настройки: $panel", false))
+                messages.add(ChatMessage("✅ Настройки: $panel", false))
                 return
             }
 
-            // --- ДЕЙСТВИЯ С ЭКРАНОМ (КЛИКИ) ---
             val dm = resources.displayMetrics
             val sx = dm.widthPixels.toFloat() / imgW.toFloat()
             val sy = dm.heightPixels.toFloat() / imgH.toFloat()
 
             when (action) {
                 "click" -> {
-                    val origX = actionJson.getInt("x")
-                    val origY = actionJson.getInt("y")
-                    val x = origX.toFloat() * sx
-                    val y = origY.toFloat() * sy
+                    val origX = actionJson.getInt("x"); val origY = actionJson.getInt("y")
+                    val x = origX.toFloat() * sx; val y = origY.toFloat() * sy
                     messages.add(ChatMessage("👆 Клик X:$origX Y:$origY", false))
                     service.tap(x, y, 50) { ok -> if (!ok) messages.add(ChatMessage("❌ Клик не сработал", false)) }
                 }
