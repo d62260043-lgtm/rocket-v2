@@ -184,24 +184,30 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun sendCommand(cmd: String, messages: MutableList<ChatMessage>, setLoading: (Boolean) -> Unit) {
+       private fun sendCommand(cmd: String, messages: MutableList<ChatMessage>, setLoading: (Boolean) -> Unit) {
         messages.add(ChatMessage(cmd, true))
         
-        val lowerCmd = cmd.lowercase()
+        val lowerCmd = cmd.lowercase().trim()
         
-        // 1. ЛОКАЛЬНЫЙ ЗАПУСК ПРИЛОЖЕНИЙ (100% WORKING)
-        if (lowerCmd.startsWith("открой ") || lowerCmd.startsWith("запусти ")) {
-            val appName = cmd.substringAfter(" ").trim()
+        // 1. ЛОКАЛЬНЫЙ ЗАПУСК ПРИЛОЖЕНИЙ
+        val isAppLaunch = lowerCmd.startsWith("открой ") || 
+                          lowerCmd.startsWith("запусти ") || 
+                          (!lowerCmd.contains(" ") && lowerCmd.length > 2)
+
+        if (isAppLaunch) {
+            val appName = cmd.replace("открой", "", ignoreCase = true)
+                               .replace("запусти", "", ignoreCase = true)
+                               .trim()
+                               
             if (launchAppByName(appName)) {
-                messages.add(ChatMessage("✅ Приложение '$appName' запущено", false))
-                return
+                messages.add(ChatMessage("✅ Открываю '$appName'", false))
             } else {
-                messages.add(ChatMessage("❌ Не нашел приложение '$appName'. Проверь название.", false))
-                return
+                messages.add(ChatMessage("❌ Не нашел '$appName'. Проверь название (например: YouTube, Telegram, VK).", false))
             }
+            return
         }
 
-        // 2. ОСТАЛЬНОЕ ЧЕРЕЗ ИИ
+        // 2. ИИ
         val service = RocketAccessibilityService.instance
         if (service == null) {
             messages.add(ChatMessage("⚠️ Служба «Доступ» выключена. Включи ROCKET в настройках.", false))
@@ -219,20 +225,47 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // УМНЫЙ ПОИСК ПРИЛОЖЕНИЯ ПО ИМЕНИ
+      // НОВЫЙ ПОИСК: по пакету и по частичному совпадению
     private fun launchAppByName(name: String): Boolean {
         val pm = packageManager
         val apps = pm.getInstalledApplications(PackageManager.GET_META_DATA)
         var targetPackage = ""
-        
-        // Ищем совпадение по имени (без учета регистра)
+        val searchName = name.lowercase().trim()
+
+        // Проходимся по всем приложениям
         for (app in apps) {
-            val label = pm.getApplicationLabel(app).toString()
-            if (label.contains(name, ignoreCase = true)) {
-                // Проверяем, можно ли запустить
+            val label = pm.getApplicationLabel(app).toString().lowercase()
+            val packageName = app.packageName.lowercase()
+
+            // Ищем совпадение по названию ИЛИ по имени пакета (например, youtube)
+            if (label.contains(searchName) || packageName.contains(searchName)) {
                 if (pm.getLaunchIntentForPackage(app.packageName) != null) {
                     targetPackage = app.packageName
                     break
+                }
+            }
+        }
+
+        // Если по точному имени не нашли, ищем "умнее" (например, "ютуб" -> "youtube")
+        if (targetPackage.isEmpty()) {
+            val synonyms = mapOf(
+                "ютуб" to "youtube",
+                "телеграм" to "telegram",
+                "вк" to "vk",
+                "вконтакте" to "vk",
+                "хром" to "chrome",
+                "камера" to "camera"
+            )
+            val engName = synonyms[searchName] ?: searchName
+            
+            for (app in apps) {
+                val label = pm.getApplicationLabel(app).toString().lowercase()
+                val packageName = app.packageName.lowercase()
+                if (label.contains(engName) || packageName.contains(engName)) {
+                    if (pm.getLaunchIntentForPackage(app.packageName) != null) {
+                        targetPackage = app.packageName
+                        break
+                    }
                 }
             }
         }
@@ -246,7 +279,6 @@ class MainActivity : ComponentActivity() {
         }
         return false
     }
-
     private fun askAI(prompt: String, base64Image: String, messages: MutableList<ChatMessage>, setLoading: (Boolean) -> Unit) {
         val bytes = android.util.Base64.decode(base64Image, android.util.Base64.DEFAULT)
         val options = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
