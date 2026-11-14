@@ -40,7 +40,11 @@ class MainActivity : ComponentActivity() {
     private val API_KEY = "ar-UvJujXawcMgZKFvniORK7limUqjW6UwGTSD6MpHt"
     private val API_URL = "https://api.altrouter.ai/v1/chat/completions"
     private val MODEL = "gemini-3.1-pro"
-    private val client = OkHttpClient()
+   private val client = OkHttpClient.Builder()
+    .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+    .readTimeout(120, java.util.concurrent.TimeUnit.SECONDS)
+    .writeTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+    .build()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
