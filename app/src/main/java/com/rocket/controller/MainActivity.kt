@@ -64,7 +64,6 @@ class MainActivity : ComponentActivity() {
         var inputText by remember { mutableStateOf("") }
         var isLoading by remember { mutableStateOf(false) }
         val listState = rememberLazyListState()
-        val scope = rememberCoroutineScope()
 
         LaunchedEffect(Unit) {
             messages.add(ChatMessage("Привет, Дим! Я ROCKET. Готов управлять твоим телефоном. Что делаем?", false))
@@ -163,13 +162,11 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun sendCommand(cmd: String, messages: MutableList<ChatMessage>, setLoading: (Boolean) -> Unit) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
-            messages.add(ChatMessage("⚠️ Нет разрешения на «Оверлей». Дай его в настройках.", false))
-            return
-        }
+        // Проверка оверлея удалена нахуй — она ломала работу на MIUI/HyperOS
+
         val service = RocketAccessibilityService.instance
         if (service == null) {
-            messages.add(ChatMessage("⚠️ Служба «Доступ» выключена. Включи ROCKET в настройках.", false))
+            messages.add(ChatMessage("⚠️ Служба «Доступ» выключена. Включи ROCKET в настройках Accessibility.", false))
             return
         }
         messages.add(ChatMessage(cmd, true))
